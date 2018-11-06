@@ -164,6 +164,43 @@ class Noise(Sample):
         samples = np.linspace(range[0], range[1]) + offset
         return samples
 
+class ResultPlot(object):
+    def __init__(self, x_range, num_points, num_bins, mu, sigma):
+        self.x_range = x_range
+
+        self.num_points = num_points
+        self.num_bins = num_bins
+
+        self.mu = mu
+        self.sigma = sigma
+
+        self.xs = np.linspace(x_range[0], x_range[1], num_points)
+        self.bins = np.linspace(x_range[0], x_range[1], num_bins)
+
+    def show_results(self, db_init, db_pre_trained, db_trained, p_d, p_g, save_img=True):
+        db_x = np.linspace(self.x_range[0], self.x_range[1], len(db_trained))
+        p_x = np.linspace(self.x_range[0], self.x_range[1], len(p_d))
+        f, ax = plt.subplot(1)
+        ax.plot(db_x, db_init, 'g--', linewidth=2, label='db_init')
+        ax.plot(db_x, db_pre_trained, 'c--', linewidth=2, label='db_pre_trained')
+        ax.plot(db_x, db_trained, 'g-', linewidth=2, label='db_trained')
+        ax.set_ylim(0, max(1, np.max(p_d) * 1.1))
+        ax.set_xlim(max(self.mu - self.sigma * 3, self.x_range[0] * 0.9), 
+                    min(self.mu + self.sigma*3, self.x_range[1] * 0.9))
+        plt.plot(p_x, p_d, 'b-', linewidth=2, label='real data')
+        plt.plot(p_x, p_g, 'r-', linewidth=2, label='generated data')
+        plt.title('1D Generative Adversarial Network: ' + '(mu : %3g. ' % self.mu + ' sigma : %3g)' % self.sigma)
+        plt.xlabel('Data values')
+        plt.ylabel('Probability density')
+        plt.legend()
+        plt.grid(True)
+
+        if save_img:
+            plt.savefig('GAN_1D_Gaussian' + '_mu_%g' % self.mu + '_sigma_%g' % self.sigma + '.png')
+
+        plt.show()
+
+
 class NetFactory(ABC):
     def __init__(self, default_args_dict=None):
         self.default_args_dict = default_args_dict
@@ -171,15 +208,16 @@ class NetFactory(ABC):
 
     def create(self, name, input, reuse_var=False, args_dict=None):
         with tf.variable_scope(name) as scope:
-            scope.reuse_variables()
+            if reuse_var:
+                scope.reuse_variables()
     
             if args_dict is None:
                 net_args = self.default_args_dict                
             else:
                 net_args = args_dict
         
-            net_out = _create_net(input, net_args)
-            net = Net(name, input, False, net_out)
+            net_out = self._create_net(input, net_args)
+            net = Net(name, input, reuse_var, net_out)
 
         return net
 
@@ -190,13 +228,16 @@ class NetFactory(ABC):
 
 
 class Gaussian1DGeneraterFactory(NetFactory):
-    def _create_net(self, input, args_dict=None):
+    def _create_net(self, input, args_dict):
+        w_init = tf.truncated_normal_initializer(stddev=2)
+        b_init = tf.constant_initializer(0.)
+        
         w0 = tf.get_variable('w0', 
-                             [input.get_shape()[1], kwargs['num_hidden']], 
+                             [input.get_shape()[1], args_dict['num_hidden']], 
                              initializer=w_init)
-        b0 = tf.get_variable('b0', [kwargs['num_hidden']], 
+        b0 = tf.get_variable('b0', [args_dict['num_hidden']], 
                                 initializer=b_init)
-        h0 = tf.nn.relu(tf.matmul(z, w0) + b0)
+        h0 = tf.nn.relu(tf.matmul(input, w0) + b0)
 
         w1 = tf.get_variable('w1', [h0.get_shape()[1], 1], initializer=w_init)
         b1 = tf.get_variable('b1', [1], initializer=b_init)
@@ -206,18 +247,21 @@ class Gaussian1DGeneraterFactory(NetFactory):
         return o
 
 class Gaussian1DDiscriminatorFactory(NetFactory):
-    def _create_net(self, input, args_dict=None):
+    def _create_net(self, input, args_dict):
+        w_init = tf.contrib.layers.variance_scaling_initializer()
+        b_init = tf.constant_initializer(0.)
+
         w0 = tf.get_variable('w0', 
-                             [input.get_shape()[1], kwargs['num_hidden']], 
+                             [input.get_shape()[1], args_dict['num_hidden']], 
                              initializer=w_init)
-        b0 = tf.get_variable('b0', [kwargs['num_hidden']], 
+        b0 = tf.get_variable('b0', [args_dict['num_hidden']], 
                                 initializer=b_init)
-        h0 = tf.nn.relu(tf.matmul(z, w0) + b0)
+        h0 = tf.nn.relu(tf.matmul(input, w0) + b0)
 
         w1 = tf.get_variable('w1', [h0.get_shape()[1], 1], initializer=w_init)
         b1 = tf.get_variable('b1', [1], initializer=b_init)
             
-        o = tf.matmul(h0, w1) + b1
+        o =  tf.sigmoid(tf.matmul(h0, w1) + b1)
 
         return o
 
@@ -391,12 +435,47 @@ class GANTrainer(object):
         self.d_factory = discriminator_factory
 
         self.G_z_input, self.G_z = self._init_G_z_net()        
-        self.D_pre_input, self.D_pre_label, self.D_pre = _init_D_pre_net()
-        self.D_real_input, self.D_real, self.D_fake = _init_D_net()
+        self.D_pre_input, self.D_pre_label, self.D_pre = self._init_D_pre_net()
+        self.D_real_input, self.D_real, self.D_fake = self._init_D_net()
 
         self.loss_g, self.opt_g = _init_G_loss_opt()
         self.loss_d_pre, self.opt_d_pre = _init_D_pre_loss_opt()
-        self.loss_d, self.opt_d = _init_D_loss_opt()   
+        self.loss_d, self.opt_d = _init_D_loss_opt()
+
+        self.sess = tf.InteractiveSession()
+        tf.global_variables_initializer().run()
+
+
+    def get_decision_boundary(self, num_points, batch_size, plot_xs):
+        db = np.zeros((num_points, 1))
+        for i in range(num_points // batch_size):
+            db[batch_size * i:batch_size * (i+1)] = self.sess.run(self.D_real, {x: np.reshape(plot_xs[batch_size*i:batch_size*(i+1)], (batch_size, 1))})
+
+        return db
+
+    
+    def pretrain_discriminator(self, num_steps):
+        for step in range(num_steps):
+            print('pre-training : %d/%d' % (step + 1, num_steps))
+        # pass
+        print('pre-training finished!')
+
+    
+    def train_discriminator(self, num_iters):
+        np.random.seed(np.random.randint(0, num_iters))
+        x = self.x_sampler.sample(self.batch_size)
+        z = self.z_sampler.sample(self.batch_size)
+
+        loss_d, _ = self.sess.run([self.loss_d, self.opt_d], {x: np.reshape(x, (batch_size, 1)), z: np.reshape(z, (batch_size, 1))})
+
+        return loss_d
+
+        
+    def train_generator(self, num_iter):
+        z = self.z_sampler.sample(batch_size)
+        loss_g, _ = self.sess.run([self.loss_g, self.opt
+
+        
 
     def _init_G_z_net(self):
         G_z_input = tf.placeholder(tf.float32, shape=(None, 1))
@@ -486,6 +565,14 @@ def train_gaussian_1D_GAN():
                              g_factory, d_factory, 
                              batch_size, learning_rate, train_iters)
 
+    plot = ResultPlot(10000, 20, mu, sigma)
+
+    #db_init = np.zeros((plot.num_points, 1))
+    #for i in range(plot.num_points // batch_size):
+    #    db_init[batch_size
+
+    sess = tf.InteractiveSession()
+    tf.global_variables_initializer().run()
 
 def main():
     train_gaussian_1D_GAN()
