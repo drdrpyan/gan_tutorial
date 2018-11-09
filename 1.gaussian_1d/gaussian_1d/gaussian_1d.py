@@ -3,6 +3,7 @@ import matplotlib.pyplot as plt
 import tensorflow as tf
 from abc import *
 import os
+import sys
   
         
 class Sample(ABC):
@@ -25,13 +26,13 @@ class Gaussian1D(Sample):
 
 
 class Noise(Sample):
-    def __init__(self, range):
-        self.range = range
+    def __init__(self, noise_range):
+        self.noise_range = noise_range
     
 
     def sample(self, num):
-        offset = np.random.random(num) * (float(self.range[1] - self.range[0]) / num)
-        samples = np.linspace(range[0], range[1]) + offset
+        offset = np.random.random(num) * (float(self.noise_range[1] - self.noise_range[0]) / num)
+        samples = np.linspace(self.noise_range[0], self.noise_range[1], len(offset)) + offset
         return samples
 
 class ResultPlot(object):
@@ -75,14 +76,18 @@ class ResultPlot(object):
 
     #    plt.show()
 
-    def show(self, db, real_data, gen_data, d_iter, g_iter, save_prefix=None):
-        p_real = self._data_to_pdf(real_data)
-        p_gen = self._data_to_pdf(gen_data)
+    def show(self, db, real_data, gen_data, d_iter=None, g_iter=None, save_prefix=None, out_name=None):
+        #p_real = self._data_to_pdf(real_data)
+        #p_gen = self._data_to_pdf(gen_data)
+        p_real, _ = np.histogram(real_data, bins=self.bins, density=True)
+        p_gen, _ = np.histogram(gen_data, bins=self.bins, density=True)
 
         db_x = np.linspace(self.x_range[0], self.x_range[1], len(db))
         p_x = np.linspace(self.x_range[0], self.x_range[1], len(p_real))
 
         f, ax = plt.subplots(1)
+        ax.set_ylim(0, max(max(1, np.max(p_real) * 1.1), np.max(p_gen) * 1.1))
+        ax.set_xlim(max(self.mu - self.sigma * 3, self.x_range[0] * 0.9), min(self.mu + self.sigma * 3, self.x_range[1] * 0.9))
 
         plt.plot(db_x, db, 'g--', linewidth=2, label='decision boundary')
 
@@ -90,20 +95,26 @@ class ResultPlot(object):
         plt.plot(p_x, p_real, 'b-', linewidth=2, label='real data')
         plt.plot(p_x, p_gen, 'r-', linewidth=2, label='generated data')
     
-        plt.title('D iter : %d, ' % d_iter + 'G iter : %d' % g_iter)
+        plt.title('1D Generative Adversarial Network: ' + '(mu : %3g,' % self.mu + ' sigma : %3g)' % self.sigma)
         plt.xlabel('Data values')
         plt.ylabel('Probability density')
         plt.legend()
         plt.grid(True)
 
-        if save_prefix is not None:
-            plt.savefig(os.path.normpath(save_prefix + 'D%d_' %  d_iter + 'G%d.png' % g_iter))
+        #if out_name is None:
+        #    plt.savefig(os.path.normpath(save_prefix + 'D%d_' %  d_iter + 'G%d.png' % g_iter))
+        #else:
+        #    plt.savefig(out_name)
         
+        #plt.show()
+        plt.pause(0.5)
         plt.show()
+        
+        
 
 
     def _data_to_pdf(self, data):
-        pdf, _ = np.histogram(data, bins=self.num_bins, density=True)
+        pdf, _ = np.histogram(data, bins=self.bins, density=True)
         return pdf
 
 
@@ -200,6 +211,10 @@ class GANTrainer(object):
         self.D_pre_input, self.D_pre_label, self.D_pre = self._init_D_pre_net()
         self.D_real_input, self.D_real, self.D_fake = self._init_D_net()
 
+        #d_pre_param = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, self.D_pre.name)
+        #d_real_param = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, self.D_real.name)
+        #d_fake_param = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, self.D_fake.name)
+
         self.loss_g, self.opt_g = self._init_G_loss_opt()
         self.loss_d_pre, self.opt_d_pre = self._init_D_pre_loss_opt()
         self.loss_d, self.opt_d = self._init_D_loss_opt()
@@ -207,12 +222,23 @@ class GANTrainer(object):
         self.sess = tf.InteractiveSession()
         tf.global_variables_initializer().run()
 
+        self.d_saver = tf.train.Saver(tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, self.D_real.name))
+        self.g_saver = tf.train.Saver(tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, self.G_z.name))
 
-    def get_decision_boundary(self, num_points, batch_size, plot_xs):
-        db = np.zeros((num_points, 1))
-        for i in range(num_points // batch_size):
-            db[batch_size * i:batch_size * (i+1)] = self.sess.run(self.D_real.output, 
-                {self.D_real_input: np.reshape(plot_xs[batch_size*i:batch_size*(i+1)], (batch_size, 1))})
+        #d_pre_param = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, self.D_pre.name)
+        #d_real_param = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, self.D_real.name)
+        #d_fake_param = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, self.D_fake.name)
+
+
+    def get_decision_boundary(self, plot_xs):
+        b = self.batch_size
+
+        db = np.zeros((len(plot_xs), 1))
+        for i in range(len(plot_xs) // b):
+            db[b * i:b * (i+1)] = self.sess.run(self.D_real.output, 
+                {self.D_real_input: np.reshape(plot_xs[b*i:b*(i+1)], (b, 1))})
+            #db[b * i:b * (i+1)] = self.sess.run(self.D_pre.output, 
+            #    {self.D_pre_input: np.reshape(plot_xs[b*i:b*(i+1)], (b, 1))})
 
         return db
 
@@ -233,6 +259,16 @@ class GANTrainer(object):
                 {self.D_pre_input: np.reshape(x, (num_bins, 1)), 
                     self.D_pre_label: np.reshape(labels, (num_bins, 1))})
         
+        # store pre-trained variables
+        d_pre_params = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, self.D_pre.name)
+        d_weights = self.sess.run(d_pre_params)
+        # copy weights from pre-training over to new D network
+        d_real_params = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, self.D_real.name)
+        tf.global_variables_initializer().run()
+        for i, v in enumerate(d_real_params):
+            self.sess.run(v.assign(d_weights[i]))
+        
+        
         print('pre-training finished!')
 
     
@@ -242,41 +278,77 @@ class GANTrainer(object):
         z = self.z_sampler.sample(self.batch_size)
 
         loss_d, _ = self.sess.run([self.loss_d, self.opt_d], 
-            {self.D_real_input: np.reshape(x, (batch_size, 1)), 
-                self.G_z_input: np.reshape(z, (batch_size, 1))})
+            {self.D_real_input: np.reshape(x, (self.batch_size, 1)), 
+                self.G_z_input: np.reshape(z, (self.batch_size, 1))})
 
         return loss_d
 
         
     def train_generator(self):
-        z = self.z_sampler.sample(batch_size)
+        z = self.z_sampler.sample(self.batch_size)
         loss_g, _ = self.sess.run([self.loss_g, self.opt_g], 
-            {self.G_z_input: np.reshape(z, (batch_size, 1))})
+            {self.G_z_input: np.reshape(z, (self.batch_size, 1))})
 
         return loss_g
 
-    def pick_best_g_param(self):
-        pass
+
+    def pick_best_g_param(self, ckpt_list):
+        num_sample = 1000
+        num_bin = 100
+        bins = np.linspace(self.z_sampler.noise_range[0], self.z_sampler.noise_range[1], num_bin)
+
+        p_real, _ = np.histogram(self.get_real_data(num_sample), bins, density=True)
+        
+        best_idx = 0
+        best_kl = sys.float_info.max
+
+        for i in range(len(ckpt_list)):
+            self.g_saver.restore(self.sess, ckpt_list[i])
+
+            p_gen, _ = np.histogram(self.get_gen_data(num_sample), bins, density=True)
+
+            kl = 0
+            for j in range(len(p_real)):
+                kl += (p_real[j] * np.log((p_real[j] + self._eps) / (p_gen[j] + self._eps)))
+            if kl < best_kl:
+                best_idx = i
+                best_kl = kl
+
+        return ckpt_list[best_idx]           
 
 
     def get_real_data(self, num):
         return self.x_sampler.sample(num)
 
     def get_gen_data(self, num):
-        zs = np.linspace(z_sampler.range[0], z_sampler.range[1], num)
+        zs = np.linspace(self.z_sampler.noise_range[0], self.z_sampler.noise_range[1], num)
         gen = np.zeros((num, 1))
         for i in range(num // self.batch_size):
-            gen[batch_size * i:batch_size * (i+1)] = sess.run(self.G_z.output, 
-                {self.G_z_input: np.reshape(zs[batch_size*i:batch_size*(i+1)], (batch_size, 1))})
+            gen[self.batch_size * i:self.batch_size * (i+1)] = self.sess.run(self.G_z.output, 
+                {self.G_z_input: np.reshape(zs[self.batch_size*i:self.batch_size*(i+1)], (self.batch_size, 1))})
         
-        return gen
+        return gen      
+
+
+    def save_generator(self, path, step=None):
+        saver = tf.train.Saver(tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, self.G_z.name))
+        saved_path = saver.save(self.sess, path, step)
+        return saved_path
+        
+
+    def save_discriminator(self, path):
+        saver = tf.train.Saver(tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, self.D_real.name))
+        saver.save(self.sess, path)
+
+    def load_generator(self, path):
+        pass
 
         
         
 
     def _init_G_z_net(self):
         G_z_input = tf.placeholder(tf.float32, shape=(None, 1))
-        G_z = self.g_factory.create('G_z', G_z_input)
+        G_z = self.g_factory.create('G-z', G_z_input)
 
         return G_z_input, G_z
 
@@ -284,15 +356,15 @@ class GANTrainer(object):
     def _init_D_pre_net(self):
         D_pre_input = tf.placeholder(tf.float32, shape=(None, 1))
         D_pre_label = tf.placeholder(tf.float32, shape=(None, 1))
-        D_pre = self.d_factory.create('D_pre', D_pre_input)
+        D_pre = self.d_factory.create('D-pre', D_pre_input)
 
         return D_pre_input, D_pre_label, D_pre
 
 
     def _init_D_net(self):
         D_real_input = tf.placeholder(tf.float32, shape=(None, 1))
-        D_real = self.d_factory.create('D', D_real_input)
-        D_fake = self.d_factory.create('D', self.G_z.output, True)
+        D_real = self.d_factory.create('D-x', D_real_input)
+        D_fake = self.d_factory.create('D-x', self.G_z.output, True)
         
         return D_real_input, D_real, D_fake
 
@@ -347,11 +419,11 @@ def train_gaussian_1D_GAN():
 
     batch_size = 150
     learning_rate = 0.03
-    train_iters = 3000
+    train_iters = 100
 
     num_hidden = 32
 
-    num_train_step = 20
+    num_train_step = 20000
     
     num_g_train_iter = 100
     g_train_checkpt = 10
@@ -361,8 +433,9 @@ def train_gaussian_1D_GAN():
     num_d_pretrain_ter = 1000
 
 
-    g_ckpt_prefix = ''
-    d_ckpt_prefix = ''
+    g_ckpt_prefix = './ckpt/G'
+    d_ckpt_prefix = './ckpt/D'
+    result_path = './result'
 
     x_sampler = Gaussian1D(mu, sigma)
     z_sampler = Noise(z_range)
@@ -375,39 +448,89 @@ def train_gaussian_1D_GAN():
                              batch_size, learning_rate, train_iters)
 
     plot = ResultPlot(z_range, 10000, 20, mu, sigma)
+    
+    # initial state
+    db_init = gan_trainer.get_decision_boundary(plot.xs)
+    data_real = gan_trainer.get_real_data(plot.num_points)
+    data_gen = gan_trainer.get_gen_data(plot.num_points)
+    plot.show(db_init, data_real, data_gen, out_name=os.path.join(result_path, 'initial_state.png'))
 
-    g_saver = tf.train.Saver(var_list:)
-
-    db_init = gan_trainer.get_decision_boundary(plot.num_points, batch_size, plot.xs)
-
+    # pretrain discriminator
     gan_trainer.pretrain_discriminator(num_d_pretrain_ter)
+    db_pretrain = gan_trainer.get_decision_boundary(plot.xs)
+    plot.show(db_pretrain, data_real, data_gen, out_name=os.path.join(result_path, 'pretrained_d.png'))
 
-    db_pretrain = gan_trainer.get_decision_boundary(plot.num_points, batch_size, plot.xs)
-
+    # train
     for s in range(num_train_step):
-        for i_g in range(num_g_train_iter):
-            gan_trainer.train_generator()
+        #g_ckpt_list = []
+        #for i_g in range(num_g_train_iter):
+        #    gan_trainer.train_generator()
             
-            if i_g % g_train_checkpt == 0:
-                saver.save(sess
+        #    if i_g % g_train_checkpt == 0:
+        #        g_ckpt_path = gan_trainer.save_generator(g_ckpt_prefix, s*num_g_train_iter + i_g)
+        #        g_ckpt_list.append(g_ckpt_path)        
         
+        #gan_trainer.pick_best_g_param(g_ckpt_list)
+
+        #for i_d in range(num_d_train_iter):
+        #    gan_trainer.train_discriminator()
+        print('training : %d/%d' % (s+ 1, num_train_step))
+        gan_trainer.train_generator()
+        gan_trainer.train_discriminator()
+
+    data_real = gan_trainer.get_real_data(plot.num_points)
+    data_gen = gan_trainer.get_gen_data(plot.num_points)
+    db = gan_trainer.get_decision_boundary(plot.xs)
+    plot.show(db, data_real, data_gen, out_name='./result.png')
         
-        gan_trainer.pick_best_g_param()
 
-        for i_d in range(num_d_train_ter):
-            gan_trainer.train_discriminator()
+def net_test(x, n_hidden=32):
 
-        plot.show(
+    # initializers
+    w_init = tf.contrib.layers.variance_scaling_initializer()
+    b_init = tf.constant_initializer(0.)
 
-        
+    # 1st hidden layer
+    w0 = tf.get_variable('w0', [x.get_shape()[1], n_hidden], initializer=w_init)
+    b0 = tf.get_variable('b0', [n_hidden], initializer=b_init)
+    h0 = tf.nn.relu(tf.matmul(x, w0) + b0)
 
-    #plot.show_results(db_init, None, None, None, None)
+    # output layer
+    w1 = tf.get_variable('w1', [h0.get_shape()[1], 1], initializer=w_init)
+    b1 = tf.get_variable('b1', [1], initializer=b_init)
+    o = tf.sigmoid(tf.matmul(h0, w1) + b1)
 
-    #db_init = np.zeros((plot.num_points, 1))
-    #for i in range(plot.num_points // batch_size):
-    #    db_init[batch_size
+    return o
 
 def main():
+    #with tf.variable_scope('f') as scope:
+    #    x0 = tf.placeholder(tf.float32, shape=(None, 1))
+    #    n0 = net_test(x0)
+
+    #with tf.variable_scope('t') as scope:
+    #    x1 = tf.placeholder(tf.float32, shape=(None, 1))
+    #    #x2 = tf.placeholder(tf.float32, shape=(None, 1))
+    #    n1 = net_test(x1)
+    #    #scope.reuse_variables()
+    #    #n2 = net_test(x2)
+
+    #with tf.variable_scope('t', reuse=True) as scope:
+    #    x3 = tf.placeholder(tf.float32, shape=(None, 1))
+    #    n3 = net_test(x3)
+
+    #n0_params = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, 'f')
+    #n1_params = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, 't')
+    #n3_params = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, 't_1')
+    
+    #sess = tf.InteractiveSession()
+    #tf.global_variables_initializer().run()
+
+    #n0_weights = sess.run(n0_params)
+    #n1_weights = sess.run(n1_params)
+
+    #n1_enum = enumerate(n1_params)
+
+
     train_gaussian_1D_GAN()
 
 

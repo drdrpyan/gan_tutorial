@@ -3,3 +3,5 @@
 1.gaussian_1d/gaussian_1d/gaussian_1d(ref).py
 *.pyproj
 1.gaussian_1d/gaussian_1d/.vs/gaussian_1d/v14/.suo
+1.gaussian_1d/gaussian_1d/ckpt/*
+*.png
