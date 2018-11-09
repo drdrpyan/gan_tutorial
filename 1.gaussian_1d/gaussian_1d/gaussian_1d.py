@@ -76,7 +76,7 @@ class ResultPlot(object):
 
     #    plt.show()
 
-    def show(self, db, real_data, gen_data, d_iter=None, g_iter=None, save_prefix=None, out_name=None):
+    def show(self, db, real_data, gen_data, out_path, title):
         #p_real = self._data_to_pdf(real_data)
         #p_gen = self._data_to_pdf(gen_data)
         p_real, _ = np.histogram(real_data, bins=self.bins, density=True)
@@ -86,7 +86,8 @@ class ResultPlot(object):
         p_x = np.linspace(self.x_range[0], self.x_range[1], len(p_real))
 
         f, ax = plt.subplots(1)
-        ax.set_ylim(0, max(max(1, np.max(p_real) * 1.1), np.max(p_gen) * 1.1))
+        #ax.set_ylim(0, max(max(1, np.max(p_real) * 1.1), np.max(p_gen) * 1.1))
+        ax.set_ylim(0, 1)
         ax.set_xlim(max(self.mu - self.sigma * 3, self.x_range[0] * 0.9), min(self.mu + self.sigma * 3, self.x_range[1] * 0.9))
 
         plt.plot(db_x, db, 'g--', linewidth=2, label='decision boundary')
@@ -95,20 +96,23 @@ class ResultPlot(object):
         plt.plot(p_x, p_real, 'b-', linewidth=2, label='real data')
         plt.plot(p_x, p_gen, 'r-', linewidth=2, label='generated data')
     
-        plt.title('1D Generative Adversarial Network: ' + '(mu : %3g,' % self.mu + ' sigma : %3g)' % self.sigma)
+        title1 = '1D Generative Adversarial Network: ' + '(mu : %3g,' % self.mu + ' sigma : %3g)' % self.sigma
+        title2 = title
+        plt.title(title1 + '\n' + title2)
         plt.xlabel('Data values')
         plt.ylabel('Probability density')
         plt.legend()
         plt.grid(True)
 
+        plt.savefig(os.path.normpath(os.path.join(out_path, title+'.png')))
+        plt.close(1)
         #if out_name is None:
         #    plt.savefig(os.path.normpath(save_prefix + 'D%d_' %  d_iter + 'G%d.png' % g_iter))
         #else:
         #    plt.savefig(out_name)
         
         #plt.show()
-        plt.pause(0.5)
-        plt.show()
+        #plt.pause(0.5)
         
         
 
@@ -211,10 +215,6 @@ class GANTrainer(object):
         self.D_pre_input, self.D_pre_label, self.D_pre = self._init_D_pre_net()
         self.D_real_input, self.D_real, self.D_fake = self._init_D_net()
 
-        #d_pre_param = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, self.D_pre.name)
-        #d_real_param = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, self.D_real.name)
-        #d_fake_param = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, self.D_fake.name)
-
         self.loss_g, self.opt_g = self._init_G_loss_opt()
         self.loss_d_pre, self.opt_d_pre = self._init_D_pre_loss_opt()
         self.loss_d, self.opt_d = self._init_D_loss_opt()
@@ -225,10 +225,6 @@ class GANTrainer(object):
         self.d_saver = tf.train.Saver(tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, self.D_real.name))
         self.g_saver = tf.train.Saver(tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, self.G_z.name))
 
-        #d_pre_param = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, self.D_pre.name)
-        #d_real_param = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, self.D_real.name)
-        #d_fake_param = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, self.D_fake.name)
-
 
     def get_decision_boundary(self, plot_xs):
         b = self.batch_size
@@ -237,8 +233,6 @@ class GANTrainer(object):
         for i in range(len(plot_xs) // b):
             db[b * i:b * (i+1)] = self.sess.run(self.D_real.output, 
                 {self.D_real_input: np.reshape(plot_xs[b*i:b*(i+1)], (b, 1))})
-            #db[b * i:b * (i+1)] = self.sess.run(self.D_pre.output, 
-            #    {self.D_pre_input: np.reshape(plot_xs[b*i:b*(i+1)], (b, 1))})
 
         return db
 
@@ -339,12 +333,7 @@ class GANTrainer(object):
     def save_discriminator(self, path):
         saver = tf.train.Saver(tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, self.D_real.name))
         saver.save(self.sess, path)
-
-    def load_generator(self, path):
-        pass
-
-        
-        
+       
 
     def _init_G_z_net(self):
         G_z_input = tf.placeholder(tf.float32, shape=(None, 1))
@@ -423,15 +412,16 @@ def train_gaussian_1D_GAN():
 
     num_hidden = 32
 
-    num_train_step = 20000
+    num_train_step = 5000
     
-    num_g_train_iter = 100
+    num_g_train_iter = 10
     g_train_checkpt = 10
 
     num_d_train_iter = 100
 
     num_d_pretrain_ter = 1000
 
+    result_capture = 10
 
     g_ckpt_prefix = './ckpt/G'
     d_ckpt_prefix = './ckpt/D'
@@ -453,12 +443,12 @@ def train_gaussian_1D_GAN():
     db_init = gan_trainer.get_decision_boundary(plot.xs)
     data_real = gan_trainer.get_real_data(plot.num_points)
     data_gen = gan_trainer.get_gen_data(plot.num_points)
-    plot.show(db_init, data_real, data_gen, out_name=os.path.join(result_path, 'initial_state.png'))
+    plot.show(db_init, data_real, data_gen, result_path, 'initial_state')
 
     # pretrain discriminator
     gan_trainer.pretrain_discriminator(num_d_pretrain_ter)
     db_pretrain = gan_trainer.get_decision_boundary(plot.xs)
-    plot.show(db_pretrain, data_real, data_gen, out_name=os.path.join(result_path, 'pretrained_d.png'))
+    plot.show(db_pretrain, data_real, data_gen, result_path, 'pretrained')
 
     # train
     for s in range(num_train_step):
@@ -475,62 +465,24 @@ def train_gaussian_1D_GAN():
         #for i_d in range(num_d_train_iter):
         #    gan_trainer.train_discriminator()
         print('training : %d/%d' % (s+ 1, num_train_step))
-        gan_trainer.train_generator()
-        gan_trainer.train_discriminator()
+        for i_g in range(num_g_train_iter):
+            gan_trainer.train_generator()
+        for i_d in range(num_d_train_iter):
+            gan_trainer.train_discriminator()
 
-    data_real = gan_trainer.get_real_data(plot.num_points)
-    data_gen = gan_trainer.get_gen_data(plot.num_points)
-    db = gan_trainer.get_decision_boundary(plot.xs)
-    plot.show(db, data_real, data_gen, out_name='./result.png')
+        if s % result_capture == 0:
+            data_real = gan_trainer.get_real_data(plot.num_points)
+            data_gen = gan_trainer.get_gen_data(plot.num_points)
+            db = gan_trainer.get_decision_boundary(plot.xs)
+            plot.show(db, data_real, data_gen, result_path, 'iter%08d' % s)
+
+    #data_real = gan_trainer.get_real_data(plot.num_points)
+    #data_gen = gan_trainer.get_gen_data(plot.num_points)
+    #db = gan_trainer.get_decision_boundary(plot.xs)
+    #plot.show(db, data_real, data_gen, out_name='./result.png')
         
 
-def net_test(x, n_hidden=32):
-
-    # initializers
-    w_init = tf.contrib.layers.variance_scaling_initializer()
-    b_init = tf.constant_initializer(0.)
-
-    # 1st hidden layer
-    w0 = tf.get_variable('w0', [x.get_shape()[1], n_hidden], initializer=w_init)
-    b0 = tf.get_variable('b0', [n_hidden], initializer=b_init)
-    h0 = tf.nn.relu(tf.matmul(x, w0) + b0)
-
-    # output layer
-    w1 = tf.get_variable('w1', [h0.get_shape()[1], 1], initializer=w_init)
-    b1 = tf.get_variable('b1', [1], initializer=b_init)
-    o = tf.sigmoid(tf.matmul(h0, w1) + b1)
-
-    return o
-
 def main():
-    #with tf.variable_scope('f') as scope:
-    #    x0 = tf.placeholder(tf.float32, shape=(None, 1))
-    #    n0 = net_test(x0)
-
-    #with tf.variable_scope('t') as scope:
-    #    x1 = tf.placeholder(tf.float32, shape=(None, 1))
-    #    #x2 = tf.placeholder(tf.float32, shape=(None, 1))
-    #    n1 = net_test(x1)
-    #    #scope.reuse_variables()
-    #    #n2 = net_test(x2)
-
-    #with tf.variable_scope('t', reuse=True) as scope:
-    #    x3 = tf.placeholder(tf.float32, shape=(None, 1))
-    #    n3 = net_test(x3)
-
-    #n0_params = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, 'f')
-    #n1_params = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, 't')
-    #n3_params = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, 't_1')
-    
-    #sess = tf.InteractiveSession()
-    #tf.global_variables_initializer().run()
-
-    #n0_weights = sess.run(n0_params)
-    #n1_weights = sess.run(n1_params)
-
-    #n1_enum = enumerate(n1_params)
-
-
     train_gaussian_1D_GAN()
 
 
