@@ -22,7 +22,7 @@ class TileImageMaker(object):
 
         self._check_image_size(images)
 
-        r, c = self._calc_grid(rows, cols)
+        r, c = self._calc_grid(num_images, rows, cols)
 
         if num_images > r * c:
             raise Exception("len(images) is larger than tile grids")
@@ -36,6 +36,8 @@ class TileImageMaker(object):
             x = x_begin[i % c]
             bg[y:y+images[i].shape[0], x:x+images[i].shape[1], :] = images[i]
 
+        return bg
+
 
     def _check_image_size(self, images):
         shape = images[0].shape
@@ -43,7 +45,7 @@ class TileImageMaker(object):
             if shape != img.shape:
                 raise Exception('All images must have same shape')
 
-    def _calc_grid(self, rows, cols):
+    def _calc_grid(self, num_images, rows, cols):
         if (rows is None) and (cols is None):
             raise Exception("At leas one of 'rows' and 'cols' must be an integer")
         elif rows is None:
@@ -56,11 +58,11 @@ class TileImageMaker(object):
             r = rows
             c = cols
 
-        return r, c
+        return int(r), int(c)
 
     def _create_background(self, img_shape, row, col):
-        height = image_shape[0] * row
-        width = image_shape[1] * col
+        height = img_shape[0] * row
+        width = img_shape[1] * col
         bg = np.zeros([height, width, img_shape[2]])
         return bg
         

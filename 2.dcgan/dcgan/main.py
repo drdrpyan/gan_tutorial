@@ -1,8 +1,14 @@
+import dcgan
 import tensorflow as tf
 
 def main():
-    x = tf.get_variable('x', [1, 64, 64, 3], 'float')
-    
+    sess = tf.InteractiveSession()
+    train_data_pass = 'D:/dataset/celebA'
+    train_data_format = 'jpg'
+    epoch = 20
+
+    model = dcgan.DCGAN(sess, train_data_pass, train_data_format)
+    model.train(epoch)    
 
 
 if __name__ == '__main__':
