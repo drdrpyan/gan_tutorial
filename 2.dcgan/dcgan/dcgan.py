@@ -48,6 +48,8 @@ class DCGAN(object):
 
         self._init_sampling_config(num_sample, sampling_iter, sample_path, sample_z)
 
+        self._build_model()
+
         self.summary = Summary()
         self._init_summary(self.summary)
 
@@ -69,13 +71,14 @@ class DCGAN(object):
 
         self.sample_images = self.image_loader.load_by_idx(range(0, self.num_sample))
 
-        self._build_model()
-
 
     def train(self, epoch, learning_rate=0.01, beta1=0.9, sampling=True):
-        with tf.control_dependencies(tf.get_collection(tf.GraphKeys.UPDATE_OPS, 'generator')):
+        #with tf.control_dependencies(tf.get_collection(tf.GraphKeys.UPDATE_OPS, 'generator')):
+        #    g_opt = tf.train.AdamOptimizer(learning_rate, beta1=beta1).minimize(self.loss_G, var_list=self.vars_G)
+        #with tf.control_dependencies(tf.get_collection(tf.GraphKeys.UPDATE_OPS, 'discriminator')):
+        #    d_opt = tf.train.AdamOptimizer(learning_rate, beta1=beta1).minimize(self.loss_D, var_list=self.vars_D)
+        with tf.control_dependencies(tf.get_collection(tf.GraphKeys.UPDATE_OPS)):
             g_opt = tf.train.AdamOptimizer(learning_rate, beta1=beta1).minimize(self.loss_G, var_list=self.vars_G)
-        with tf.control_dependencies(tf.get_collection(tf.GraphKeys.UPDATE_OPS, 'discriminator')):
             d_opt = tf.train.AdamOptimizer(learning_rate, beta1=beta1).minimize(self.loss_D, var_list=self.vars_D)
 
         try:
@@ -93,13 +96,13 @@ class DCGAN(object):
                 batch_img = self.image_loader.load_by_idx(range(idx*self.batch_size, (idx+1)*self.batch_size))
                 batch_z = np.random.uniform(-1, 1, [self.batch_size, self.z_dim]).astype(np.float32)
 
-                _, summary_str = self.sess.run([d_opt, self.summary_g],
+                _, summary_str = self.sess.run([d_opt, self.summary_d],
                     feed_dict={self.input: batch_img, self.z: batch_z, 
                                self.G_train_flag: False, self.D_train_flag: True})
                 self.summary_writer.add_summary(summary_str, counter)
 
-                _, summary_str = self.sess.run([g_opt, self.summary_loss_g],
-                    feed_dict={self.z: batch_z, self.G_train_flag: True, self.D_train_flag: False})
+                _, summary_str = self.sess.run([g_opt, self.summary_g],
+                    feed_dict={self.z: batch_z, self.input: batch_img, self.G_train_flag: True, self.D_train_flag: False})
                 self.summary_writer.add_summary(summary_str, counter)
 
                 err_D_real = self.loss_D_real.eval({self.input: batch_img, self.D_train_flag: False})
@@ -133,11 +136,13 @@ class DCGAN(object):
         
         self.summary_loss_g = summary.scalar_summary('loss_g', self.loss_G)
 
+        self.summary_image = summary.image_summary('input', self.input)
+
         self.summary_g = summary.merge_summary(
             [self.summary_z, self.summary_d_fake, self.summary_g, 
                 self.summary_loss_d_fake, self.summary_loss_g])
         self.summary_d = summary.merge_summary(
-            [self.summary_z, self.summary_d_real, self.summary_loss_d_real,
+            [self.summary_image, self.summary_z, self.summary_d_real, self.summary_loss_d_real,
                 self.summary_loss_d])
 
         self.summary_writer = summary.SummaryWriter('./logs', self.sess.graph)
@@ -193,24 +198,34 @@ class DCGAN(object):
 
             #h4 = tf.layers.conv2d_transpose(h3_2, 3, [4, 4], [2, 2], 'same', name='deconv4')
 
-            if self.image_shape[0] < h3_2.shape[1] or self.image_shape[0] % h3_2.shape[1] != 0:
-                raise Exception('(image height)/(feature map height)=C, ' 
-                                + 'but (image height)=%d, (feature map height)=%d' 
-                                % (img_shape[0], h3_2.shape[1]))
-            if self.image_shape[1] < h3_2.shape[2] or self.image_shape[1] % h3_2.shape[2] != 0:
-                raise Exception('(image width)/(feature map width)=C, ' 
-                                + 'but (image width)=%d, (feature map width)=%d' 
-                                % (img_shape[1], h3_2.shape[2]))
-            block_size = self.image_shape[0] / int(h3_2.shape[1])
-            if block_size != self.image_shape[1] < h3_2.shape[2]:
-                raise Exception('(image height)/(feature map height) != (image width)/(feature map width)')
+            #if self.image_shape[0] < h3_2.shape[1] or self.image_shape[0] % h3_2.shape[1] != 0:
+            #    raise Exception('(image height)/(feature map height)=C, ' 
+            #                    + 'but (image height)=%d, (feature map height)=%d' 
+            #                    % (img_shape[0], h3_2.shape[1]))
+            #if self.image_shape[1] < h3_2.shape[2] or self.image_shape[1] % h3_2.shape[2] != 0:
+            #    raise Exception('(image width)/(feature map width)=C, ' 
+            #                    + 'but (image width)=%d, (feature map width)=%d' 
+            #                    % (img_shape[1], h3_2.shape[2]))
+            #block_size = self.image_shape[0] / int(h3_2.shape[1])
+            #if block_size != self.image_shape[1] < h3_2.shape[2]:
+            #    raise Exception('(image height)/(feature map height) != (image width)/(feature map width)')
                 
-            ch = block_size * block_size * self.image_shape[2]
-            h4_0 = tf.layers.conv2d(h3_2, ch, [3, 3], [1, 1], 'same', name='conv0')
-            #h4_1 = tf.reshape(h4_0, self.image_shape, name='reshape')
-            h4_1 = tf.depth_to_space(h4_0, block_size, name='pix_shuffle')
+            #ch = block_size * block_size * self.image_shape[2]
+            #h4_0 = tf.layers.conv2d(h3_2, ch, [3, 3], [1, 1], 'same', name='conv0')
+            ##h4_1 = tf.reshape(h4_0, self.image_shape, name='reshape')
+            #h4_1 = tf.depth_to_space(h4_0, block_size, name='pix_shuffle')
 
-            o = tf.nn.tanh(h4_1, name='tanh_out')
+            #o = tf.nn.tanh(h4_1, name='tanh_out')
+
+            #h4_0 = tf.layers.conv2d_transpose(h3_2, 64, [4, 4], [2, 2], 'same', name='deconv4')
+            #h4_1 = tf.layers.batch_normalization(h4_0, training=train_flag, name='deconv4_bn')
+            #h4_2 = tf.nn.relu(h4_1, name='deconv4_relu')
+
+            #h5 = tf.layers.conv2d(h4_2, self.image_shape[2], [1, 1], [1, 1], 'same', name='conv5')
+
+            h4 = tf.layers.conv2d_transpose(h3_2, self.image_shape[2], [4, 4], [2, 2], 'same', name='deconv4')
+
+            o = tf.nn.tanh(h4, name='tanh_out')            
 
         return o
 
@@ -236,11 +251,13 @@ class DCGAN(object):
             h3_1 = tf.layers.batch_normalization(h3_0, training=train_flag, name='conv3_bn')
             h3_2 = tf.nn.leaky_relu(h3_1, name='conv3_lrelu')
 
-            pool_size = [int(h3_2.shape[1]), int(h3_2.shape[2])]
-            h4 = tf.layers.average_pooling2d(h3_2, pool_size, (1, 1), name='avg_pool')
+            #pool_size = [int(h3_2.shape[1]), int(h3_2.shape[2])]
+            #h4 = tf.layers.average_pooling2d(h3_2, pool_size, (1, 1), name='avg_pool')
             #h4 = tf.reduce_mean(h3_2, axis=[1, 2], name='avg_pool')
 
-            h5 = tf.layers.conv2d(h4, 1, [1, 1], name='conv4')
+            #h5 = tf.layers.conv2d(h4, 1, [1, 1], name='conv4')
+
+            h5 = tf.layers.conv2d(h3_2, 1, [int(h3_2.shape[1]), int(h3_2.shape[2])], name='conv4')
 
             o = tf.sigmoid(h5, name='sig_out')
 
