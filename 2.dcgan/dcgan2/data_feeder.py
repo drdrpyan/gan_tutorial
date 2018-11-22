@@ -107,7 +107,7 @@ class MNISTFeeder(BaseDataFeeder):
         self._DATA_SIZE = 784
         self._LABEL_SIZE = 1
 
-        self._DATA_SHAPE = [28, 28]
+        self._DATA_SHAPE = [28, 28, 1]
 
         self._NUM_TRAIN_DATA = 60000
         self._NUM_TEST_DATA = 10000
@@ -125,6 +125,8 @@ class MNISTFeeder(BaseDataFeeder):
         else:
             self.num_data = self._NUM_TEST_DATA
 
+        self.shape = self._DATA_SHAPE
+
     def get(self, num):
         data_list = []
         while len(data_list) != num:
@@ -141,7 +143,7 @@ class MNISTFeeder(BaseDataFeeder):
 
     def _bytes_to_mat(self, b):
         mat1d = [i for i in b]
-        mat = np.reshape(mat1d, self._DATA_SHAPE + [1])
+        mat = np.reshape(mat1d, self._DATA_SHAPE)
         return mat
         
                 

@@ -190,3 +190,57 @@ class MNISTGen2(MNISTGen):
             o = tf.nn.sigmoid(h3)
 
             return o
+
+class MNISTDisc3(object):
+    def __init__(self, name, data_input, label_input, train_flag, reuse=False):
+        self.name = name
+        self.inputs = [data_input, label_input, train_flag]
+        raw_o, sig_o = self._build(reuse)
+        self.outputs = [raw_o, sig_o]
+
+    def _build(self, reuse):
+        with tf.variable_scope(self.name) as scope:
+            if reuse:
+                scope.reuse_variables()
+            h0_0 = tf.layers.conv2d(self.inputs[0], 64, (5, 5), (2, 2), 'same')
+            h0_1 = tf.nn.leaky_relu(h0_0)
+
+            h1_0 = tf.layers.conv2d(h0_1, 128, (5, 5), (2, 2), 'same')
+            h1_1 = tf.nn.leaky_relu(h1_0)
+
+            kernel_size = (h1_1.shape[1], h1_1.shape[2])
+            h2_0 = tf.layers.conv2d(h1_1, 1024, kernel_size, (1, 1), 'valid')
+            h2_1 = tf.nn.leaky_relu(h2_0)
+
+            h3 = tf.layers.conv2d(h2_1, 1, (1, 1), (1, 1), 'valid')
+
+            raw_o = h3
+            sig_o = tf.nn.sigmoid(h3)
+
+        return raw_o, sig_o
+
+class MNISTGen3(object):
+    def __init__(self, name, noise_input, train_flag):
+        self.name = name
+        self.inputs = [noise_input, train_flag]
+        raw_o, sig_o = self._build()
+        self.outputs = [raw_o, sig_o]
+
+    def _build(self):
+        with tf.variable_scope(self.name) as scope:
+            h0_0 = tf.layers.dense(self.inputs[0], 1024)
+            h0_1 = tf.nn.relu(h0_0)
+
+            h1_0 = tf.layers.dense(h0_1, 7*7*128)
+            h1_1 = tf.nn.relu(h1_0)
+
+            h2_0 = tf.reshape(h1_1, [-1, 7, 7, 128])
+            h2_1 = tf.layers.conv2d_transpose(h2_0, 128, (5, 5), (2, 2), 'same')
+            h2_2 = tf.nn.relu(h2_1)
+
+            h3 = tf.layers.conv2d_transpose(h2_2, 1, (5, 5), (2, 2), 'same')
+
+            raw_o = h3
+            sig_o = tf.nn.sigmoid(h3)
+
+        return raw_o, sig_o
