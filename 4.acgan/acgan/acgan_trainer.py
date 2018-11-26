@@ -18,7 +18,11 @@ class ACGANTrainer(object):
 
         self._init_input(data_feeder.data_shape, data_feeder.label_shape,
                          noise_feeder.shape)
-        self._build_graph(self._mnist_discriminator, self._mnist_generator)
+        self._build_graph(self._mnist_disc_base, 
+                          self._mnist_disc_decision,
+                          self._mnist_classifier,
+                          self._mnist_generator)
+        #self._init_class_metric()
         self._init_loss()
         self._init_trainable_vars()
         self._init_optimizer(opt_param)    
@@ -32,15 +36,24 @@ class ACGANTrainer(object):
 
         self.flag_disc_train = tf.placeholder(tf.bool)
         self.flag_gen_train = tf.placeholder(tf.bool)
+        self.flag_class_train = tf.placeholder(tf.bool)
 
-    def _build_graph(self, discriminator, generator):
+    def _build_graph(self, disc_base, disc_decision, classifier, generator):
         self.gen_raw_out, self.gen_sig_out = \
             generator('gen', self.noise_input, self.label_input, self.flag_gen_train)
 
+        disc_real_base = disc_base('disc-base', self.data_real_input, self.flag_disc_train)
+        disc_fake_base = disc_base('disc-base', self.gen_sig_out, self.flag_disc_train, True)
+
         self.disc_real_raw_out, self.disc_real_sig_out = \
-            discriminator('disc', self.data_real_input, self.label_input, self.flag_disc_train)
+            disc_decision('disc-decision', disc_real_base, self.flag_disc_train)
         self.disc_fake_raw_out, self.disc_fake_sig_out = \
-            discriminator('disc', self.gen_sig_out, self.label_input, self.flag_disc_train, True)
+            disc_decision('disc-decision', disc_fake_base, self.flag_disc_train, True)
+
+        self.class_real_raw_out, self.class_real_sm_out = \
+            classifier('classifier', disc_real_base, self.flag_class_train)
+        self.class_fake_raw_out, self.class_fake_sm_out = \
+            classifier('classifier', disc_fake_base, self.flag_class_train, True)
 
     def _init_loss(self):
         loss_disc_real = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(
@@ -52,13 +65,41 @@ class ACGANTrainer(object):
         self.loss_gen = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(
             logits=self.disc_fake_raw_out, labels=tf.ones_like(self.disc_fake_raw_out)))
 
+        loss_class_real = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits_v2(
+            logits=self.class_real_raw_out, labels=self.label_input))
+        loss_class_fake = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits_v2(
+            logits=self.class_fake_raw_out, labels=self.label_input))
+        self.loss_class = loss_class_real + loss_class_fake
+
     def _init_trainable_vars(self):
-        self.vars_disc = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, 'disc')
+        vars_disc1 = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, 'disc-base')
+        vars_disc2 = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, 'disc-decision')
+        self.vars_disc = list(set(vars_disc1 + vars_disc2))
         self.vars_gen  = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, 'gen')
+        self.vars_class = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, 'classifier')
 
     def _init_optimizer(self, opt_param):
-        self.opt_disc = tf.train.AdamOptimizer(opt_param['learning_rate']).minimize(self.loss_disc, var_list=self.vars_disc)
-        self.opt_gen = tf.train.AdamOptimizer(opt_param['learning_rate']*opt_param['gen_lr_mult']).minimize(self.loss_gen, var_list=self.vars_gen)
+         with tf.control_dependencies(tf.get_collection(tf.GraphKeys.UPDATE_OPS)):
+            self.opt_disc = tf.train.AdamOptimizer(opt_param['learning_rate']) \
+                .minimize(self.loss_disc, var_list=self.vars_disc)
+            self.opt_gen = tf.train.AdamOptimizer(opt_param['learning_rate']*opt_param['gen_lr_mult']) \
+                .minimize(self.loss_gen, var_list=self.vars_gen)
+            self.opt_class = tf.train.AdamOptimizer(opt_param['learning_rate']*opt_param['class_lr_mult']) \
+                .minimize(self.loss_class, var_list=list(set(self.vars_disc+self.vars_gen+self.vars_class)))
+        #self.opt_disc = tf.train.AdamOptimizer(opt_param['learning_rate']) \
+        #    .minimize(self.loss_disc, var_list=self.vars_disc)
+        #self.opt_gen = tf.train.AdamOptimizer(opt_param['learning_rate']*opt_param['gen_lr_mult']) \
+        #    .minimize(self.loss_gen, var_list=self.vars_gen)
+        #self.opt_class = tf.train.AdamOptimizer(opt_param['learning_rate']*opt_param['class_lr_mult']) \
+        #    .minimize(self.loss_class, var_list=list(set(self.vars_disc+self.vars_gen+self.vars_class)))
+
+    def _init_class_metric(self):
+        labels = tf.reshape(self.label_input, self.class_real_sm_out.shape)
+        acc_real, _ = tf.metrics.accuracy(labels=tf.argmax(labels, 1),
+                                          predictions=tf.argmax(self.class_real_sm_out, 1))
+        acc_fake, _ = tf.metrics.accuracy(labels=tf.argmax(labels, 1),
+                                          predictions=tf.argmax(self.class_fake_sm_out, 1))
+        self.acc_class = tf.reduce_mean((acc_real + acc_fake)/2.0)
 
     def _init_tb(self, log_path):
         data_real = tf.summary.image('data_real', self.data_real_input)
@@ -68,6 +109,12 @@ class ACGANTrainer(object):
         data_fake = tf.summary.image('data_fake', self.gen_sig_out)
         loss_gen = tf.summary.scalar('loss_gen', self.loss_gen)
         self.gen_summary = tf.summary.merge([data_fake, loss_gen])
+
+        #loss_class = tf.summary.scalar('loss_class', self.loss_class)
+        #acc_class = tf.summary.scalar('acc_class', self.acc_class)
+        #self.class_summary = tf.summary.merge([loss_class, acc_class])
+        loss_class = tf.summary.scalar('loss_class', self.loss_class)
+        self.class_summary = tf.summary.merge([loss_class])
 
         self.summary_writer = tf.summary.FileWriter(log_path, self.sess.graph)
 
@@ -119,14 +166,26 @@ class ACGANTrainer(object):
             encoded.append(vec)
 
     def _write_sample(self, epoch):
-        gen_data, l_d, l_g = self.sess.run(
-            [self.gen_sig_out, self.loss_disc, self.loss_gen], 
+        #gen_data, l_d, l_g, l_c, a_c = self.sess.run(
+        #    [self.gen_sig_out, self.loss_disc, self.loss_gen,
+        #     self.loss_class, self.acc_class], 
+        #    feed_dict={self.data_real_input: self.sample_data,
+        #               self.label_input: self.sample_label,
+        #               self.noise_input: self.sample_noise,
+        #               self.flag_disc_train: False, self.flag_gen_train: False,
+        #               self.flag_class_train: False})
+        #tile_image = self.sample_image_maker.create(gen_data, None, self.data_feeder.num_class)
+        #image_path = os.path.normpath(os.path.join(self.sample_path, 'e%04d_ld%.8f_lg%.8f%_lc%.8f_ac%.8f.png' % (epoch+1, l_d, l_g, l_c, a_c)))
+        #imageio.imwrite(image_path, tile_image)
+        gen_data, l_d, l_g, l_c = self.sess.run(
+            [self.gen_sig_out, self.loss_disc, self.loss_gen, self.loss_class], 
             feed_dict={self.data_real_input: self.sample_data,
                        self.label_input: self.sample_label,
                        self.noise_input: self.sample_noise,
-                       self.flag_disc_train: False, self.flag_gen_train: False})
+                       self.flag_disc_train: False, self.flag_gen_train: False,
+                       self.flag_class_train: False})
         tile_image = self.sample_image_maker.create(gen_data, None, self.data_feeder.num_class)
-        image_path = os.path.normpath(os.path.join(self.sample_path, 'e%04d_ld%.8f_lg%.8f.png' % (epoch+1, l_d, l_g)))
+        image_path = os.path.normpath(os.path.join(self.sample_path, 'e%04d_ld%.8f_lg%.8f_lc%.8f.png' % (epoch+1, l_d, l_g, l_c)))
         imageio.imwrite(image_path, tile_image)
             
 
@@ -155,18 +214,39 @@ class ACGANTrainer(object):
                     feed_dict={self.data_real_input: data_real,
                                self.noise_input: noise,
                                self.label_input: label,
-                               self.flag_disc_train: True, self.flag_gen_train: True})
+                               self.flag_disc_train: True, self.flag_gen_train: True,
+                               self.flag_class_train: True})
                 self.summary_writer.add_summary(summary, iter)
 
-                _, loss_gen, summary = self.sess.run(
-                    [self.opt_gen, self.loss_gen, self.gen_summary],
-                    feed_dict={self.noise_input: noise,
+                #_, loss_gen, summary_gen, _, loss_class, acc_class, summary_class = self.sess.run(
+                #    [self.opt_gen, self.loss_gen, self.gen_summary, 
+                #     self.opt_class, self.loss_class, self.acc_class, self.class_summary],
+                #    feed_dict={self.data_real_input: data_real,
+                #               self.noise_input: noise,
+                #               self.label_input: label,
+                #               self.flag_disc_train: True, self.flag_gen_train: True,
+                #               self.flag_class_train: True})
+                #self.summary_writer.add_summary(summary_gen, iter)
+                #self.summary_writer.add_summary(summary_class, iter)
+
+                #print("Epoch: [%2d/%2d] [%4d/%4d] time: %4.4f, loss_d: %.8f, loss_g: %.8f, loss_c: %.8f, acc: %.8f" \
+                #    % (e+1, self.epoch, i+1, iter_per_epoch, time.time() - start_time, loss_disc, loss_gen, loss_class, acc_class))
+
+                _, loss_gen, summary_gen, _, loss_class, summary_class = self.sess.run(
+                    [self.opt_gen, self.loss_gen, self.gen_summary, 
+                     self.opt_class, self.loss_class, self.class_summary],
+                    feed_dict={self.data_real_input: data_real,
+                               self.noise_input: noise,
                                self.label_input: label,
-                               self.flag_disc_train: True, self.flag_gen_train: True})
-                self.summary_writer.add_summary(summary, iter)
+                               self.flag_disc_train: True, self.flag_gen_train: True,
+                               self.flag_class_train: True})
+                self.summary_writer.add_summary(summary_gen, iter)
+                self.summary_writer.add_summary(summary_class, iter)
 
-                print("Epoch: [%2d/%2d] [%4d/%4d] time: %4.4f, loss_d: %.8f, loss_g: %.8f" \
-                    % (e+1, self.epoch, i+1, iter_per_epoch, time.time() - start_time, loss_disc, loss_gen))
+                print("Epoch: [%2d/%2d] [%4d/%4d] time: %4.4f, loss_d: %.8f, loss_g: %.8f, loss_c: %.8f" \
+                    % (e+1, self.epoch, i+1, iter_per_epoch, time.time() - start_time, loss_disc, loss_gen, loss_class))
+
+                
 
             self._write_sample(e)
         
@@ -196,15 +276,9 @@ class ACGANTrainer(object):
     #        h3_0_0 = tf.layers.dense(h2_3, 1)
     #        sig_o = tf.nn.sigmoid(h3_0_0)
     
-    def _mnist_disc_base(self, name, data_input, label_input, 
-                             train_flag, reuse=False):
+    def _mnist_disc_base(self, name, data_input, train_flag, reuse=False):
         with tf.variable_scope(name, reuse=reuse):
-            #x = tf.reshape(data_input, [self.batch_size, 1, 1, -1])
-            y = tf.reshape(label_input, [self.batch_size, 1, 1, -1])
-            new_y_shape = [data_input.shape[0], data_input.shape[1], data_input.shape[2], y.shape[3]]
-            xy = tf.concat(values=[data_input, y*tf.ones(new_y_shape)], axis=3)
-
-            h0_0 = tf.layers.conv2d(xy, 64, [4, 4], [2, 2], 'same')
+            h0_0 = tf.layers.conv2d(data_input, 64, [4, 4], [2, 2], 'same')
             h0_1 = tf.nn.leaky_relu(h0_0)
         
             h1_0 = tf.layers.conv2d(h0_1, 128, [4, 4], [2, 2], 'same')
@@ -218,8 +292,23 @@ class ACGANTrainer(object):
 
         return h2_3
 
-    def _mnist_disc_decision(self, disc_base_out, reuse=False):
-        
+    def _mnist_disc_decision(self, name, disc_base_out, train_flag, reuse=False):
+        with tf.variable_scope(name, reuse=reuse):
+            h0_0 = tf.layers.dense(disc_base_out, 1)
+            sig_o = tf.nn.sigmoid(h0_0)
+
+        return h0_0, sig_o
+
+    def _mnist_classifier(self, name, disc_base_out, train_flag, reuse=False):
+        with tf.variable_scope(name, reuse=reuse):
+            h0_0 = tf.layers.dense(disc_base_out, 128)
+            h0_1 = tf.contrib.layers.batch_norm(h0_0, is_training=train_flag, updates_collections=None)
+            h0_2 = tf.nn.leaky_relu(h0_1)
+
+            h1 = tf.layers.dense(h0_2, self.data_feeder.num_class)
+            softmax_o = tf.nn.softmax(h1)
+
+        return h1, softmax_o        
 
     def _mnist_generator(self, name, noise_input, label_input,
                          train_flag):
